@@ -1,22 +1,28 @@
 import fastf1
 import plotly.graph_objects as go
+#imports plotly and fastf1 needed for these  graphs
 
+#Loads the session which is set to a default right now
 session = fastf1.get_session(2024, "Bahrain", "Q")
 session.load()
 
+#selects drivers and stores them as a list(also a default right now)
 drivers = ["VER", "HAM", "LEC"]
 
+#creates the plotly graph template
 fig = go.Figure()
 
+#for each driver in the driver list retrieves the data
 for drv in drivers:
     lap = session.laps.pick_drivers(drv).pick_fastest()
     tel = lap.get_car_data().add_distance()
 
-# Track temperature trace data to access it
+# Tracks temperature trace data to access it
 weather = session.weather_data
 
+#cutsomises graph with a title, axis labels and values
 fig.add_trace(go.Scatter(
-    x=weather["Time"].dt.total_seconds(),   # convert timedelta to seconds
+    x=weather["Time"].dt.total_seconds(),   # convert timedelta to seconds so plotly processes it
     y=weather["TrackTemp"],
     mode="lines",
     name="Track Temp (°C)",
@@ -36,8 +42,10 @@ fig.update_layout(
         overlaying="y",
         side="right"
     ),
-    template="plotly_dark"
+    template="plotly_dark"#sets the graph colour scheme
 )
 
-fig.show()
+fig.show()#Executes the graph
+
+
 
