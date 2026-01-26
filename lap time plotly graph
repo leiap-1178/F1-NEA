@@ -1,0 +1,61 @@
+import fastf1
+from fastf1.core import Session
+import plotly.graph_objects as go
+import pandas as pd
+
+def generate_lap_time_plot(
+        year=2025,
+        grand_prix="Azerbaijan",
+        session_type="R",
+        drivers=None
+    ):
+    # Default drivers if none provided
+    if drivers is None:
+        drivers = ['HAM', 'PER', 'VER', 'RUS']
+
+    # Load the F1 session
+    race: Session = fastf1.get_session(year, grand_prix, session_type)
+    race.load()
+
+    # Create the Plotly figure
+    fig = go.Figure()
+
+    # Define line styles
+    my_styles = [
+        {'line': {'width': 5}, 'opacity': 0.3},
+        {'line': {'width': 1}, 'opacity': 0.7}
+    ]
+
+    # Loop through each driver
+    for driver in drivers:
+        laps = race.laps.pick_drivers(driver).pick_quicklaps().reset_index()
+
+        # Convert timedelta to seconds
+        laps['LapTimeSeconds'] = laps['LapTime'].dt.total_seconds()
+
+        # Alternate line styles
+        style = my_styles[0] if drivers.index(driver) % 2 == 0 else my_styles[1]
+
+        # Add trace to the figure
+        fig.add_trace(go.Scatter(
+            x=laps.index + 1,
+            y=laps['LapTimeSeconds'],
+            mode='lines',
+            name=driver,
+            line=style['line'],
+            opacity=style['opacity']
+        ))
+
+    # Layout settings
+    fig.update_layout(
+        title=f"Lap Time Comparison – {grand_prix} {year}",
+        xaxis_title="Lap Number",
+        yaxis_title="Lap Time (seconds)",
+        template="plotly_dark",
+        legend_title="Driver",
+        height=600
+    )
+
+    return fig
+
+
