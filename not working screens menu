@@ -1,0 +1,97 @@
+# Imports the classes from kivy used to make the menu screen
+from kivy.app import App
+from kivy.lang import Builder
+from kivy.animation import Animation
+from kivy.config import Config
+
+Config.set("graphics", "width", "360")
+Config.set("graphics", "height", "640")
+
+KV = """
+<SideMenu@BoxLayout>:
+    orientation: "vertical"
+    size_hint_x: None
+    size_hint_y: 1
+    width: 150
+    x: -self.width   # hidden by default
+    canvas.before:
+        Color:
+            rgba: 0.15, 0.15, 0.15, 1
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    Button:
+        text: "Theme"
+        size: self.size
+    Button:
+        text: "Font"
+        size: self.size
+    Button:
+        text: "Graph Generation"
+        size: self.size
+        on_release: app.root.ids.sm.current = "Graph Generator"
+    Button:
+        text: "Insight"
+        size: self.size
+        on_release: app.root.ids.sm.current = "Insight"
+    Button:
+        text: "Driver Compare"
+        size: self.size
+        on_release: app.root.ids.sm.current = "Comparison Screen"
+    Button:
+        text: "Settings"
+        size: self.size
+        on_release: app.root.ids.sm.current = "Settings"
+    Button:
+        text: "Help & Feedback"
+        size: self.size
+        on_release: app.root.ids.sm.current = "Help Screen"
+
+BoxLayout:
+    orientation: "horizontal"
+    
+    ScreenManager:
+        id: screen_manager
+        
+        GraphScreen:
+            name: "Graph Generator"
+        
+        InsightScreen:
+            name: "Insight"
+        
+        CompareScreen:
+            name: "Comparison Screen"
+        
+        SettingsScreen:
+            name: "Settings"
+        
+        HelpScreen:
+            name: "Help Screen"
+        
+
+
+    FloatLayout:
+        Button:
+            size_hint: None, None
+            size: 50, 50
+            pos_hint: {"right": 1, "top": 1}
+            background_normal: "icon.png"
+            background_down: "icon.png"
+            border: 0, 0, 0, 0
+            on_release: app.toggle_menu()
+"""
+
+class MenuApp(App):
+    def build(self):
+        return Builder.load_string(KV)
+
+    def toggle_menu(self):
+        menu = self.root.ids.menu
+        if menu.x < 0:
+            Animation(x=0, d=0.2).start(menu)
+        else:
+            Animation(x=-menu.width, d=0.2).start(menu)
+
+
+MenuApp().run()
