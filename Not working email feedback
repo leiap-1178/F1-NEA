@@ -1,0 +1,320 @@
+from kivy.app import App
+from kivy.lang import Builder
+from kivy.animation import Animation
+from kivy.config import Config
+
+Config.set("graphics", "width", "360")
+Config.set("graphics", "height", "640")
+
+from kivy.properties import BooleanProperty, ListProperty
+from kivy.core.window import Window
+from kivy.uix.button import Button
+from kivy.uix.screenmanager import Screen
+from kivy.properties import StringProperty
+import fastf1
+
+import smtplib
+from email.mime.text import MIMEText
+
+class HoverBehavior(object):
+    hovered = BooleanProperty(False)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        Window.bind(mouse_pos=self.on_mouse_pos)
+
+    def on_mouse_pos(self, *args):
+        if not self.get_root_window():
+            return
+        pos = args[1]
+        inside = self.collide_point(*self.to_widget(*pos))
+        self.hovered = inside
+
+
+class HoverButton(HoverBehavior, Button):
+    pass
+
+
+class GraphGeneratorScreen(Screen):
+    seasons = ListProperty([str(y) for y in range(2018, 2025)])
+    races = ListProperty([])
+    drivers = ListProperty([])
+    lap_times = ListProperty([])
+
+    selected_season = None
+    session = None
+
+    def load_races(self, season):
+        fastf1.Cache.enable_cache("cache")
+        self.selected_season = int(season)
+
+        schedule = fastf1.get_event_schedule(self.selected_season)
+
+        race_list = []
+        for _, event in schedule.iterrows():
+            race_list.append(f"{event['RoundNumber']} - {event['EventName']}")
+
+        self.races = race_list
+
+    def load_drivers(self, race_text):
+        round_number = int(race_text.split(" - ")[0])
+
+        self.session = fastf1.get_session(self.selected_season, round_number, 'R')
+        self.session.load()
+
+        driver_list = []
+        for d in self.session.drivers:
+            info = self.session.get_driver(d)
+            driver_list.append(info['Abbreviation'])
+
+        self.drivers = driver_list
+
+    def load_lap_times(self, driver):
+        if not self.session:
+            return
+
+        laps = self.session.laps.pick_driver(driver)
+
+        times = []
+        for _, lap in laps.iterlaps():
+            times.append(f"Lap {lap['LapNumber']}: {lap['LapTime']}")
+
+        self.lap_times = times
+
+def send_feedback(name, email, message):
+    sender = "leiapitrora@gmail.com"
+    app_password = "jldpltqggzbmeape"   # 16‑digit Gmail app password
+    receiver = "leiapitrora@gmail.com"
+
+    body = f"Feedback from {name} ({email}):\n\n{message}"
+    msg = MIMEText(body)
+    msg["Subject"] = "App Feedback"
+    msg["From"] = sender
+    msg["To"] = receiver
+
+    try:
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(sender, app_password)
+        server.sendmail(sender, receiver, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print("Email error:", e)
+        return False
+
+
+class HelpAndFeedbackScreen(Screen):
+    name_input = StringProperty("")
+    email_input = StringProperty("")
+    message_input = StringProperty("")
+
+    def submit_feedback(self):
+        from send_email import send_feedback  # or wherever you put the function
+
+        success = send_feedback(
+            self.name_input,
+            self.email_input,
+            self.message_input
+        )
+
+        if success:
+            print("Feedback sent!")
+        else:
+            print("Failed to send feedback.")
+
+
+KV = """
+<HoverButton>:
+    background_normal: ""
+    background_color: 0.2, 0.2, 0.2, 1
+    on_hovered:
+        self.background_color = (1, 0, 0, 1) if self.hovered else (0.2, 0.2, 0.2, 0.2)
+    font_name: "Formula1-Bold_web_0.ttf"
+
+
+<SideMenu@BoxLayout>:
+    orientation: "vertical"
+    size_hint: None, 1
+    width: 200
+    x: -self.width
+    y: 0
+
+    HoverButton:
+        text: "Home Page"
+        on_release: app.root.ids.sm.current = "homepage"
+
+    HoverButton:
+        text: "Graph Generation"
+        on_release: app.root.ids.sm.current = "graph"
+
+    HoverButton:
+        text: "Insight"
+        on_release: app.root.ids.sm.current = "insight"
+
+    HoverButton:
+        text: "Driver Compare"
+        on_release: app.root.ids.sm.current = "compare"
+
+    HoverButton:
+        text: "Settings"
+        on_release: app.root.ids.sm.current = "settings"
+
+    HoverButton:
+        text: "Help & Feedback"
+        on_release: app.root.ids.sm.current = "help"
+
+
+<HomePageScreen>:
+    BoxLayout:
+        Label:
+            text: "Home Page"
+            font_name: "Formula1-Bold_web_0.ttf"
+
+
+<InsightScreen>:
+    BoxLayout:
+        Label:
+            text: "Insight Screen"
+            font_name: "Formula1-Bold_web_0.ttf"
+
+
+<ComparisonScreen>:
+    BoxLayout:
+        Label:
+            text: "Driver Comparison Screen"
+            font_name: "Formula1-Bold_web_0.ttf"
+
+
+<SettingsScreen>:
+    BoxLayout:
+        Label:
+            text: "Settings Screen"
+            font_name: "Formula1-Bold_web_0.ttf"
+
+
+<HelpAndFeedbackScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: 20
+        spacing: 15
+
+        Label:
+            text: "Send Feedback"
+            font_name: "Formula1-Bold_web_0.ttf"
+            font_size: "24sp"
+            bold: True
+
+        TextInput:
+            hint_text: "Your Name"
+            multiline: False
+            on_text: root.name_input = self.text
+
+        TextInput:
+            hint_text: "Your Email"
+            multiline: False
+            on_text: root.email_input = self.text
+
+        TextInput:
+            hint_text: "Your Message"
+            size_hint_y: 0.5
+            on_text: root.message_input = self.text
+
+        Button:
+            text: "Send Feedback"
+            size_hint_y: None
+            height: "48dp"
+            on_release: root.submit_feedback()
+
+
+
+<GraphGeneratorScreen>:
+    BoxLayout:
+        orientation: "vertical"
+        padding: 20
+        spacing: 20
+
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Season"
+            values: root.seasons
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_races(self.text)
+
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Race"
+            values: root.races
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_drivers(self.text)
+
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Driver"
+            values: root.drivers
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_lap_times(self.text)
+
+        RecycleView:
+            viewclass: "Label"
+            data: [{"text": lap, "font_name": "Formula1-Bold_web_0.ttf"} for lap in root.lap_times]
+
+            RecycleBoxLayout:
+                default_size: None, dp(40)
+                default_size_hint: 1, None
+                size_hint_y: None
+                height: self.minimum_height
+                orientation: "vertical"
+                spacing: 5
+                padding: 5
+
+
+FloatLayout:
+
+    ScreenManager:
+        id: sm
+        size_hint: 1, 1
+        pos_hint: {"x": 0, "y": 0}
+
+        HomePageScreen:
+            name: "homepage"
+        GraphGeneratorScreen:
+            name: "graph"
+        InsightScreen:
+            name: "insight"
+        ComparisonScreen:
+            name: "compare"
+        SettingsScreen:
+            name: "settings"
+        HelpAndFeedbackScreen:
+            name: "help"
+
+    SideMenu:
+        id: menu
+
+    Button:
+        size_hint: None, None
+        size: 50, 50
+        pos_hint: {"right": 1, "top": 1}
+        background_normal: "icon.png"
+        background_down: "icon.png"
+        border: 0, 0, 0, 0
+        on_release: app.toggle_menu()
+"""
+
+
+class MainMenu(App):
+    def build(self):
+        return Builder.load_string(KV)
+
+    def toggle_menu(self):
+        menu = self.root.ids.menu
+        if menu.x < 0:
+            Animation(x=0, d=0.2).start(menu)
+        else:
+            Animation(x=-menu.width, d=0.2).start(menu)
+
+
+MainMenu().run()
