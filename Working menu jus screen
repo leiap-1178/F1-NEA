@@ -137,3 +137,4 @@ class MenuApp(App):
             Animation(x=-menu.width, d=0.2).start(menu)
 
 MenuApp().run()
+
