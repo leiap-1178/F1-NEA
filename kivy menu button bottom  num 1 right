@@ -61,10 +61,13 @@ BoxLayout:
             on_release: app.toggle_menu()
 """
 
-class MenuApp(App):
+#Assigns a name to the app
+class NEA(App):
+#Repsonsible for loading the design layout
     def build(self):
         return Builder.load_string(KV)
 
+#Creates the toggle function of the menu
     def toggle_menu(self):
         menu = self.root.ids.menu
         if menu.x < 0:
@@ -72,4 +75,5 @@ class MenuApp(App):
         else:
             Animation(x=-menu.width, d=0.2).start(menu)
 
-MenuApp().run()
+Runs the application
+NEA().run()
