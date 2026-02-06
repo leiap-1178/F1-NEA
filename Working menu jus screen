@@ -5,17 +5,22 @@ from kivy.animation import Animation
 from kivy.config import Config
 Config.set("graphics", "width", "360")
 Config.set("graphics", "height", "640")
+
+#allows widgets created to be repsonsive to user inputs
 from kivy.properties import BooleanProperty
 from kivy.core.window import Window
-from kivy.uix.button import Butto
+from kivy.uix.button import Button
 
+# A class which detects mouse hovering
 class HoverBehavior(object):
     hovered = BooleanProperty(False)
 
+#calls function each time mouse is moved
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         Window.bind(mouse_pos=self.on_mouse_pos)
 
+#generates output if mouse is on screen
     def on_mouse_pos(self, *args):
         if not self.get_root_window():
             return
@@ -23,12 +28,13 @@ class HoverBehavior(object):
         inside = self.collide_point(*self.to_widget(*pos))
         self.hovered = inside
 
-
+#Allows buttons to repsond to hover detection
 class HoverButton(HoverBehavior, Button):
     pass
 
 
 KV = """
+#Defines teh layout of all hover buttons
 <HoverButton>:
     background_normal: ""
     background_color: 0.2, 0.2, 0.2, 1
@@ -41,6 +47,7 @@ KV = """
     width: 200
     x: -self.width
 
+#Changing generic button to repsonsive buttons
     HoverButton:
         text: "Home Page"
         font_name: "Formula1-Bold_web_0.ttf"
@@ -66,38 +73,40 @@ KV = """
         font_name: "Formula1-Bold_web_0.ttf"
         on_release: app.root.ids.sm.current = "help"
 
-<HomePageScreen@Screen>:
+#Defines screens so each button links to a screen
+<HomePageScreen>:
     BoxLayout:
         Label:
             text: "Home Page"
-<GraphGeneratorScreen@Screen>:
+<GraphGeneratorScreen>:
     BoxLayout:
         Label:
             text: "Graph Generator Screen"
-<InsightScreen@Screen>:
+<InsightScreen>:
     BoxLayout:
         Label:
             text: "Insight Screen"
-<ComparisonScreen@Screen>:
+<ComparisonScreen>:
     BoxLayout:
         Label:
             text: "Driver Comparison Screen"
-<SettingsScreen@Screen>:
+<SettingsScreen>:
     BoxLayout:
         Label:
             text: "Settings Screen"
-<HelpAndFeedbackScreen@Screen>:
+<HelpAndFeedbackScreen>:
     BoxLayout:
         Label:
             text: "Help & Feedback Screen"
 
-
+#How root widgets are organised
 BoxLayout:
     orientation: "horizontal"
 
     SideMenu:
         id: menu
 
+#Holds all screens allowing you to siwtch between them
     ScreenManager:
         id: sm
         
@@ -137,4 +146,5 @@ class MenuApp(App):
             Animation(x=-menu.width, d=0.2).start(menu)
 
 MenuApp().run()
+
 
