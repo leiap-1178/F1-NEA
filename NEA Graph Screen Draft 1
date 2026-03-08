@@ -77,12 +77,10 @@ class GraphGeneratorScreen(Screen):
     def load_races(self, season):
         if not season or season == "Select Season":
             return
-
         fastf1.Cache.enable_cache("cache")
         self.selected_season = int(season)
 
         schedule = fastf1.get_event_schedule(self.selected_season)
-
         race_list = []
         for _, event in schedule.iterrows():
             race_list.append(f"{event['RoundNumber']} - {event['EventName']}")
@@ -96,9 +94,7 @@ class GraphGeneratorScreen(Screen):
             return
         if not self.selected_season:
             return
-
         round_number = int(race_text.split(" - ")[0])
-
         self.session = fastf1.get_session(self.selected_season, round_number, 'R')
         self.session.load()
 
@@ -129,7 +125,7 @@ class GraphGeneratorScreen(Screen):
             f"Lap {n}: {t:.3f} s" for n, t in self.lap_times
         ]
 
-        # Plot immediately
+        # Plot the graph once all data retrieved
         self.plot_lap_times()
 
     def plot_lap_times(self):
