@@ -1,6 +1,6 @@
 from kivy.app import App  # Basis for app
 from kivy.lang import Builder  # Allows styling script to be used
-from kivy.animation import Animation  # Adds later menu animation + theme animation
+from kivy.animation import Animation  # Adds later menu animation + theme animation 
 from kivy.config import Config  # Sets size of Kivy screen
 Config.set("graphics", "width", "360")
 Config.set("graphics", "height", "640")
