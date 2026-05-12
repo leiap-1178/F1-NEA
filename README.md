@@ -1,0 +1,1025 @@
+from kivy.app import App  # Basis for app
+from kivy.lang import Builder  # Allows styling script to be used
+from kivy.animation import Animation  # Adds later menu animation + theme animation
+from kivy.config import Config  # Sets size of Kivy screen
+Config.set("graphics", "width", "360")
+Config.set("graphics", "height", "640")
+from kivy.properties import BooleanProperty, ListProperty, StringProperty
+from kivy.core.window import Window
+from kivy.uix.button import Button
+from kivy.uix.screenmanager import Screen  # Allows multiple screen creation
+import fastf1  # imports data library
+import smtplib  # email sending module
+from email.mime.text import MIMEText
+from kivy.garden.graph import Graph, LinePlot
+from kivy.graphics.transformation import Matrix
+import os
+
+if not os.path.exists("cache"):
+    os.makedirs("cache")
+
+from kivy.clock import Clock
+from datetime import datetime
+from kivy.uix.gridlayout import GridLayout
+from kivy.uix.label import Label
+import calendar
+
+class CalendarWidget(GridLayout):
+    def __init__(self, highlight_day=None, **kwargs):
+        super().__init__(**kwargs)
+        self.cols = 7
+        self.spacing = 2
+        self.highlight_day = highlight_day
+
+        now = datetime.now()
+        year = now.year
+        month = now.month
+
+        month_calendar = calendar.monthcalendar(year, month)
+
+        # Weekday labels
+        for day in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+            self.add_widget(Label(
+                text=day,
+                color=[1, 1, 1, 1],
+                font_size="14sp",
+                halign="center"
+            ))
+
+        # Calendar days
+        for week in month_calendar:
+            for day in week:
+                if day == 0:
+                    self.add_widget(Label(text=""))
+                else:
+                    if day == self.highlight_day:
+                        # Red dot under highlighted date
+                        self.add_widget(Label(
+                            text=f"[b]{day}[/b]\n[color=#FF0000]●[/color]",
+                            markup=True,
+                            halign="center",
+                            valign="middle",
+                            color=[1, 1, 1, 1]
+                        ))
+                    else:
+                        self.add_widget(Label(
+                            text=str(day),
+                            halign="center",
+                            valign="middle",
+                            color=[1, 1, 1, 1]
+                        ))
+
+class HoverBehavior(object):
+    hovered = BooleanProperty(False)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        Window.bind(mouse_pos=self.on_mouse_pos)
+
+    def on_mouse_pos(self, *args):
+        if not self.get_root_window():
+            return
+        pos = args[1]
+        inside = self.collide_point(*self.to_widget(*pos))
+        self.hovered = inside
+
+
+class HoverButton(HoverBehavior, Button):
+    pass
+
+
+#Creates the class for the home screen
+class HomePageScreen(Screen):
+    def on_enter(self):
+        # Sets up a race countdown
+        self.target = datetime(2026, 5, 24, 21, 0, 0)
+
+        #This creates a calendar
+        if "race_calendar" in self.ids:
+            self.ids.race_calendar.highlight_day = self.target.day
+
+        # Declares that the countdown will update very second
+        Clock.schedule_interval(self.update_countdown, 1)
+
+    def update_countdown(self, dt):
+        now = datetime.now()
+        remaining = self.target - now
+
+        #Sets what display when the time is <0
+        if remaining.total_seconds() <= 0:
+            self.ids.countdown_label.text = "Race has started!"
+            return
+
+        days = remaining.days
+        hours, remainder = divmod(remaining.seconds, 3600)
+        minutes, seconds = divmod(remainder, 60)
+
+        self.ids.countdown_label.text = f"{days}d {hours}h {minutes}m {seconds}s"
+
+
+class InsightScreen(Screen):
+    pass
+
+# This creates the class which all the functions for the comparison screen will be contained in
+class ComparisonScreen(Screen):
+    #Initializes the lists needed for storing data
+    seasons = ListProperty([str(y) for y in range(2018, 2025)])
+    races = ListProperty([])
+    drivers = ListProperty([])
+
+#Stores the users inputs under the following variables
+    selected_season = None
+    session = None
+    driver1_laps = []
+    driver2_laps = []
+
+#Retreives the races if the user has selected a season
+    def load_races(self, season):
+        if not season or season == "Select Season":
+            return
+        fastf1.Cache.enable_cache("cache")
+        self.selected_season = int(season)
+
+#Controls the format that the races will be shown in the spinner
+        schedule = fastf1.get_event_schedule(self.selected_season)
+        self.races = [f"{e['RoundNumber']} - {e['EventName']}" for _, e in schedule.iterrows()]
+        self.drivers = []
+
+#This code runs once the user selects a race
+    def load_drivers(self, race_text):
+        if not race_text or race_text == "Select Race":
+            return
+        round_number = int(race_text.split(" - ")[0])
+
+        #Controls how the races and drivers are shown in their lists
+        self.session = fastf1.get_session(self.selected_season, round_number, 'R')
+        self.session.load()
+
+        self.drivers = [
+            self.session.get_driver(d)['Abbreviation']
+            for d in self.session.drivers
+        ]
+    #the following 2 functions then take the inputs for both selected driver
+    def load_driver1(self, driver):
+        self.driver1_laps = self._get_lap_data(driver)
+        self.plot_graph()
+
+    def load_driver2(self, driver):
+        self.driver2_laps = self._get_lap_data(driver)
+        self.plot_graph()
+
+    #Retrieves the lap data for the selected 2 drivers
+    def _get_lap_data(self, driver):
+        if not self.session or not driver or driver == "Select Driver":
+            return []
+
+        laps = self.session.laps.pick_driver(driver)
+        return [(lap['LapNumber'], lap['LapTime'].total_seconds())
+                for _, lap in laps.iterlaps()]
+
+    #This function then creates the graph once all data needed is retrieved
+    def plot_graph(self):
+        graph = self.ids.lap_graph
+        graph.plots = []
+
+        #Sets the line settings for the first driver
+        if self.driver1_laps:
+            app = App.get_running_app()
+            line_width = 3 if app.thick_lines else 1.5
+
+            p1 = LinePlot(color=[1, 0, 0, 1], line_width=line_width)
+            p1.points = self.driver1_laps
+            graph.add_plot(p1)
+
+        #Sets the line settings for the second driver
+        if self.driver2_laps:
+            app = App.get_running_app()
+            line_width = 3 if app.thick_lines else 1.5
+
+            p2 = LinePlot(color=[0, 0.4, 1, 1], line_width=line_width)
+            p2.points = self.driver2_laps
+            graph.add_plot(p2)
+
+        #Customizes the graph axis ad scale if needed
+        all_points = self.driver1_laps + self.driver2_laps
+        if all_points:
+            xs = [p[0] for p in all_points]
+            ys = [p[1] for p in all_points]
+            graph.x_grid_label = App.get_running_app().show_grid
+            graph.y_grid_label = App.get_running_app().show_grid
+            graph.xmin = min(xs)
+            graph.xmax = max(xs)
+            graph.ymin = min(ys) - 1
+            graph.ymax = max(ys) + 1
+
+
+class SettingsScreen(Screen):
+    def clear_cache(self):
+        import shutil
+        import fastf1
+        import os
+
+        # Disable FastF1 cache to release file handles
+        fastf1.Cache.disabled = True
+
+        try:
+            if os.path.exists("cache"):
+                shutil.rmtree("cache")
+                self.cache_status = "Cache cleared successfully."
+            else:
+                self.cache_status = "No cache folder found."
+        except PermissionError:
+            self.cache_status = "Cache is currently in use. Try again after restarting the app."
+
+    cache_status = StringProperty("")
+
+
+class GraphGeneratorScreen(Screen):
+    seasons = ListProperty([str(y) for y in range(2018, 2025)])
+    races = ListProperty([])
+    drivers = ListProperty([])
+    lap_times = ListProperty([])
+
+    selected_season = None
+    session = None
+
+    def load_races(self, season):
+        if not season or season == "Select Season":
+            return
+
+        fastf1.Cache.enable_cache("cache")
+        self.selected_season = int(season)
+
+        schedule = fastf1.get_event_schedule(self.selected_season)
+
+        race_list = []
+        for _, event in schedule.iterrows():
+            race_list.append(f"{event['RoundNumber']} - {event['EventName']}")
+
+        self.races = race_list
+        self.drivers = []
+        self.lap_times = []
+
+    def load_drivers(self, race_text):
+        if not race_text or race_text == "Select Race":
+            return
+        if not self.selected_season:
+            return
+
+        round_number = int(race_text.split(" - ")[0])
+
+        self.session = fastf1.get_session(self.selected_season, round_number, 'R')
+        self.session.load()
+
+        driver_list = []
+        for d in self.session.drivers:
+            info = self.session.get_driver(d)
+            driver_list.append(info['Abbreviation'])
+
+        self.drivers = driver_list
+        self.lap_times = []
+
+    def load_lap_times(self, driver):
+        if not self.session or not driver or driver == "Select Driver":
+            return
+
+        laps = self.session.laps.pick_driver(driver)
+
+        lap_numbers = []
+        lap_seconds = []
+
+        for _, lap in laps.iterlaps():
+            lap_numbers.append(lap['LapNumber'])
+            lap_seconds.append(lap['LapTime'].total_seconds())
+
+        self.lap_times = list(zip(lap_numbers, lap_seconds))
+
+        self.lap_times_display = [
+            f"Lap {n}: {t:.3f} s" for n, t in self.lap_times
+        ]
+
+        self.plot_lap_times()
+
+    def plot_lap_times(self):
+        if not self.lap_times:
+            return
+
+        graph = self.ids.lap_graph
+        graph.plots = []
+
+        app = App.get_running_app()
+        line_width = 3 if app.thick_lines else 1.5
+
+        plot = LinePlot(color=[1, 0, 0, 1], line_width=line_width)
+        plot.points = self.lap_times
+
+        lap_nums = [p[0] for p in self.lap_times]
+        lap_vals = [p[1] for p in self.lap_times]
+        graph.x_grid_label = App.get_running_app().show_grid
+        graph.y_grid_label = App.get_running_app().show_grid
+        graph.xmin = min(lap_nums)
+        graph.xmax = max(lap_nums)
+        graph.ymin = min(lap_vals) - 1
+        graph.ymax = max(lap_vals) + 1
+
+        graph.tick_distance = 50
+
+        graph.add_plot(plot)
+#runs once the graph is created
+    def on_kv_post(self, base_widget):
+        self.ids.lap_graph.bind(on_touch_down=self.graph_touch)
+
+    #converts the graph position into data, which will be shown to the user on the label
+    def graph_to_data(self, graph, x, y):
+        gx = graph.xmin + (x - graph.pos[0]) / graph.width * (graph.xmax - graph.xmin)
+        gy = graph.ymin + (y - graph.pos[1]) / graph.height * (graph.ymax - graph.ymin)
+        return gx, gy
+
+#makes sure the user makes a touch input within the graph axis
+    def graph_touch(self, graph, touch):
+        if not graph.collide_point(*touch.pos):
+            self.ids.point_info.text = ""
+            return False
+
+    #converts the position into integer data to be shown on the label
+        gx, gy = self.graph_to_data(graph, *touch.pos)
+
+        nearest = None
+        best_dist = 9999
+
+    #finds the closest coordinate to the users touch
+        for px, py in self.lap_times:
+            dist = abs(px - gx) + abs(py - gy)
+            if dist < best_dist:
+                best_dist = dist
+                nearest = (px, py)
+
+    #runs to check if the retrieved coordinate is actually closest to the input
+        if nearest:
+            lap, time_val = nearest
+            self.ids.point_info.text = f"Lap {lap}\n{time_val:.3f} s"
+            self.highlight_point(nearest)
+
+        return True
+
+    #adds a marker on the users touch point
+    def highlight_point(self, point):
+        graph = self.ids.lap_graph
+
+        # Remove old markers
+        graph.plots = [p for p in graph.plots if not getattr(p, "is_marker", False)]
+
+        marker = LinePlot(color=[0, 1, 0, 1], line_width=3)
+        marker.points = [point]
+        marker.is_marker = True
+
+        if App.get_running_app().show_markers:
+            graph.add_plot(marker)
+
+#resets the graph generator screen
+    def reload_screen(self):
+        sm = self.manager
+        name = self.name
+
+        # Remove the old screen
+        sm.remove_widget(self)
+
+        # Create a new instance of the same class
+        new_screen = GraphGeneratorScreen(name=name)
+        sm.add_widget(new_screen)
+        sm.current = name
+
+#function that sends the email
+def send_feedback(name, email, message):
+    sender = "leiapitrora@gmail.com"
+    app_password = "jldpltqggzbmeape"
+    receiver = "leiapitrora@gmail.com"
+
+#Handles the text contained in the email
+    body = f"Feedback from {name} ({email}):\n\n{message}"
+    msg = MIMEText(body)
+    msg["Subject"] = "F1 App Feedback"
+    msg["From"] = sender
+    msg["To"] = receiver
+
+#connects to the server to send the email
+    try:
+        server = smtplib.SMTP_SSL("smtp.gmail.com", 465)
+        server.login(sender, app_password)
+        server.sendmail(sender, receiver, msg.as_string())
+        server.quit()
+        return True
+    except Exception as e:
+        print("Email error:", e)
+        return False
+
+
+class HelpAndFeedbackScreen(Screen):
+    name_input = StringProperty("")
+    email_input = StringProperty("")
+    message_input = StringProperty("")
+    status_message = StringProperty("")
+
+    def submit_feedback(self):
+        name = self.name_input.strip()
+        email = self.email_input.strip()
+        message = self.message_input.strip()
+
+        if not name or not email or not message:
+            self.status_message = "Please fill in all fields."
+            print(self.status_message)
+            return
+
+        success = send_feedback(name, email, message)
+
+        if success:
+            self.status_message = "Feedback sent! Thank you."
+            print(self.status_message)
+            self.name_input = ""
+            self.email_input = ""
+            self.message_input = ""
+        else:
+            self.status_message = "Failed to send feedback."
+            print(self.status_message)
+
+
+KV = """
+<HoverButton>:
+    background_normal: ""
+    background_color: app.background_color
+    on_hovered:
+        self.background_color = app.accent_color if self.hovered else app.background_color
+    font_name: "Formula1-Bold_web_0.ttf"
+    color: app.text_color
+
+<SideMenu@BoxLayout>:
+    orientation: "vertical"
+    size_hint: None, 1
+    width: 200
+    x: -self.width
+    y: 0
+    canvas.before:
+        Color:
+            rgba: app.background_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    HoverButton:
+        text: "Home Page"
+        on_release: app.root.ids.sm.current = "homepage"
+    HoverButton:
+        text: "Graph Generation"
+        on_release: app.root.ids.sm.current = "graph"
+    HoverButton:
+        text: "Insight"
+        on_release: app.root.ids.sm.current = "insight"
+    HoverButton:
+        text: "Driver Compare"
+        on_release: app.root.ids.sm.current = "compare"
+    HoverButton:
+        text: "Settings"
+        on_release: app.root.ids.sm.current = "settings"
+    HoverButton:
+        text: "Help & Feedback"
+        on_release: app.root.ids.sm.current = "help"
+        
+<CalendarWidget@GridLayout>:
+
+#Creates the class KV root for the home screen
+<HomePageScreen>:
+    canvas.before:
+        Color:
+            rgba: app.background_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    AnchorLayout:
+        anchor_x: "left"
+        anchor_y: "top"
+
+    #Defines the layout of the elements
+        BoxLayout:
+            orientation: "vertical"
+            padding: [20, 40, 20, 0]
+            spacing: 20
+            size_hint: None, None
+            width: root.width
+            height: self.minimum_height
+
+        #Title of the Screen
+            Label:
+                text: "Home Page"
+                font_size: "28sp"
+                halign: "left"
+                valign: "top"
+                text_size: self.size
+                size_hint_y: None
+                height: self.texture_size[1]
+                font_name: "Formula1-Bold_web_0.ttf"
+                color: app.text_color
+
+        #The countdown widgets title
+            Label:
+                markup: True
+                text: "Countdown"
+                font_size: "22sp"
+                halign: "left"
+                valign: "top"
+                text_size: self.width, None
+                size_hint_y: None
+                height: self.texture_size[1]
+                font_name: "Formula1-Bold_web_0.ttf"
+                color: app.text_color
+
+                canvas.before:
+                    Color:
+                        rgba: app.accent_color
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+
+        #Adds a loading animation to show....
+            Label:
+                id: countdown_label
+                text: "Loading..."
+                font_size: "18sp"
+                halign: "left"
+                valign: "middle"
+                text_size: self.size
+                size_hint_y: None
+                height: self.texture_size[1]
+                font_name: "Formula1-Bold_web_0.ttf"
+                color: app.text_color
+
+                canvas.before:
+                    Color:
+                        rgba: app.accent_color[0], app.accent_color[1], app.accent_color[2], 0.5
+                    RoundedRectangle:
+                        pos: self.pos
+                        size: self.size
+                        radius: [4]
+                        
+            #This adds the image of the race track            
+            Image:
+                source: "Japan_Circuit.png"
+                size_hint_x: 1
+                size_hint_y: None
+                height: self.width * (self.texture_size[1] / self.texture_size[0])
+
+            BoxLayout:
+                size_hint_y: None
+                height: "260dp"
+                padding: 10
+
+                CalendarWidget:
+                    id: race_calendar
+                    highlight_day: 23
+
+<InsightScreen>:
+    canvas.before:
+        Color:
+            rgba: app.background_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        Label:
+            text: "Insight Screen"
+            font_name: "Formula1-Bold_web_0.ttf"
+            color: app.text_color
+
+#This creates the KV root for the comparison screen
+<ComparisonScreen>:
+    canvas.before:
+        Color:
+            rgba: app.background_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+#This explains how the elements will be laid out
+    BoxLayout:
+        orientation: "vertical"
+
+        BoxLayout:
+            size_hint_y: None
+            height: root.height * 0.7  
+
+        #Allows the graph to be interacted with
+            ScatterLayout:
+                id: scatter
+                size_hint: 1, 1
+                do_rotation: False
+                do_translation: True
+                do_scale: True
+                scale_min: 0.5
+                scale_max: 5
+
+            #Creates the graph itself
+                Graph:
+                    id: lap_graph
+                    size_hint: 1, 1
+                    xlabel: "Lap"
+                    ylabel: "Time (s)"
+                    x_ticks_minor: 1
+                    x_ticks_major: 5
+                    y_ticks_major: 5
+                    y_grid_label: True
+                    x_grid_label: True
+                    padding: 5
+                    
+            #Creates the same data reading label
+                Label:
+                    id: point_info
+                    size_hint: None, None
+                    size: 200, 60
+                    pos_hint: {"right": 1, "top": 1}
+                    text: ""
+                    color: app.text_color
+                    bold: True
+                    
+        #Button empties the graph axis
+        Button:
+            text: "Reload Screen"
+            size_hint_y: None
+            height: "48dp"
+            background_normal: ""
+            background_color: app.background_color
+            color: app.accent_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_release: root.reload_screen()
+            
+        #Creates the list dropdown to select a season
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Season"
+            values: root.seasons
+            background_normal: ""
+            background_color: app.background_color
+            color: app.accent_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_races(self.text)
+            
+        #Creates the list dropdown for the races
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Race"
+            values: root.races
+            background_normal: ""
+            background_color: app.background_color
+            color: app.accent_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_drivers(self.text)
+
+        #Creates the list dropdown for the first driver
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Driver 1"
+            values: root.drivers
+            background_normal: ""
+            background_color: app.background_color
+            color: app.accent_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_driver1(self.text)
+
+        #Creates the list dropdown for the second driver
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Driver 2"
+            values: root.drivers
+            background_normal: ""
+            background_color: app.background_color
+            color: 0, 0.4, 1, 1
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_driver2(self.text)
+            
+#This initialises the settings screen widget
+<SettingsScreen>:
+    canvas.before:
+        Color:
+            rgba: app.background_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    #This defines how elements on the screen are arranged
+    BoxLayout:
+        orientation: "vertical"
+        padding: 20
+        spacing: 20
+
+#This states what the title of the screen will look like
+        Label:
+            text: "Settings"
+            font_name: "Formula1-Bold_web_0.ttf"
+            font_size: "26sp"
+            color: app.text_color
+
+        Button:
+            text: "Toggle Light / Dark Theme"
+            size_hint_y: None
+            height: "48dp"
+            background_normal: ""
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_release: app.toggle_theme()
+            
+        Button:
+            text: "Reset Theme to Default"
+            size_hint_y: None
+            height: "48dp"
+            background_normal: ""
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_release: app.reset_theme()
+
+        Button:
+            text: "Clear FastF1 Cache"
+            size_hint_y: None
+            height: "48dp"
+            background_normal: ""
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_release: root.clear_cache()
+            
+        Label:
+            text: "Graph Options"
+            font_name: "Formula1-Bold_web_0.ttf"
+            font_size: "22sp"
+            color: app.text_color
+        
+        ToggleButton:
+            text: "Show Grid Lines"
+            state: "down" if app.show_grid else "normal"
+            size_hint_y: None
+            height: "48dp"
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_state: app.show_grid = (self.state == "down")
+        
+        ToggleButton:
+            text: "Thick Graph Lines"
+            state: "down" if app.thick_lines else "normal"
+            size_hint_y: None
+            height: "48dp"
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_state: app.thick_lines = (self.state == "down")
+        
+        ToggleButton:
+            text: "Show Point Markers"
+            state: "down" if app.show_markers else "normal"
+            size_hint_y: None
+            height: "48dp"
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_state: app.show_markers = (self.state == "down")
+    
+            
+        Label:
+            text: root.cache_status
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+
+#This creates the help and feedback screen
+<HelpAndFeedbackScreen>:
+    canvas.before:
+        Color:
+            rgba: app.background_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    #This defines how the elements will be laid out
+    BoxLayout:
+        orientation: "vertical"
+        padding: 20
+        spacing: 15
+
+        Label:
+            text: "Send Feedback"
+            font_name: "Formula1-Bold_web_0.ttf"
+            font_size: "24sp"
+            bold: True
+            color: app.text_color
+
+        TextInput:
+            hint_text: "Your Name"
+            multiline: False
+            text: root.name_input
+            on_text: root.name_input = self.text
+
+        TextInput:
+            hint_text: "Your Email"
+            multiline: False
+            text: root.email_input
+            on_text: root.email_input = self.text
+
+        TextInput:
+            hint_text: "Your Message"
+            size_hint_y: 0.5
+            text: root.message_input
+            on_text: root.message_input = self.text
+
+#This creates the button that will be pressed to send the feedback
+        Button:
+            text: "Send Feedback"
+            size_hint_y: None
+            height: "48dp"
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_release: root.submit_feedback()
+
+#This label will display the error messages
+        Label:
+            text: root.status_message
+            font_name: "Formula1-Bold_web_0.ttf"
+            color: (0, 1, 0, 1) if "sent" in root.status_message.lower() else (1, 0, 0, 1)
+
+<GraphGeneratorScreen>:
+    canvas.before:
+        Color:
+            rgba: app.background_color
+        Rectangle:
+            pos: self.pos
+            size: self.size
+
+    BoxLayout:
+        orientation: "vertical"
+
+        BoxLayout:
+            size_hint_y: None
+            height: root.height * 0.7  
+
+            ScatterLayout:
+                id: scatter
+                size_hint: 1, 1
+                do_rotation: False
+                do_translation: True
+                do_scale: True
+                scale_min: 0.5
+                scale_max: 5
+
+                Graph:
+                    id: lap_graph
+                    size_hint: 1, 1
+                    xlabel: "Lap"
+                    ylabel: "Time (s)"
+                    x_ticks_minor: 1
+                    x_ticks_major: 5
+                    y_ticks_major: 5
+                    y_grid_label: True
+                    x_grid_label: True
+                    padding: 5
+                    
+            #Links to python code to show the selected point on the graph
+                Label:
+                    id: point_info
+                    size_hint: None, None
+                    size: 200, 60
+                    pos_hint: {"right": 1, "top": 1}
+                    text: ""
+                    color: app.text_color
+                    bold: True
+                    
+#Adds the button used to refresh the graph
+        Button:
+            text: "Reload Screen"
+            size_hint_y: None
+            height: "48dp"
+            background_normal: ""
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_release: root.reload_screen()
+
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Season"
+            values: root.seasons
+            background_normal: ""
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_races(self.text)
+
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Race"
+            values: root.races
+            background_normal: ""
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_drivers(self.text)
+
+        Spinner:
+            size_hint_y: None
+            height: "48dp"
+            text: "Select Driver"
+            values: root.drivers
+            background_normal: ""
+            background_color: app.accent_color
+            color: app.text_color
+            font_name: "Formula1-Bold_web_0.ttf"
+            on_text: root.load_lap_times(self.text)
+
+FloatLayout:
+
+    ScreenManager:
+        id: sm
+
+        HomePageScreen:
+            name: "homepage"
+        GraphGeneratorScreen: 
+            name: "graph"
+        InsightScreen:
+            name: "insight"
+        ComparisonScreen:
+            name: "compare"
+        SettingsScreen:
+            name: "settings"
+        HelpAndFeedbackScreen:
+            name: "help"
+
+    SideMenu:
+        id: menu
+
+    Button:
+        size_hint: None, None
+        size: 50, 50
+        pos_hint: {"right": 1, "top": 1}
+        background_normal: "menu.png"
+        background_down: "menu.png"
+        border: 0, 0, 0, 0
+        on_release: app.toggle_menu()
+"""
+
+class NEA(App):
+    background_color = ListProperty([0.1, 0.1, 0.1, 1])
+    text_color = ListProperty([1, 1, 1, 1])
+    accent_color = ListProperty([1, 0, 0, 1])
+    show_grid = BooleanProperty(True)
+    thick_lines = BooleanProperty(False)
+    show_markers = BooleanProperty(True)
+
+    def build(self):
+        root = Builder.load_string(KV)
+        root.ids.sm.current = "homepage"
+        return root
+
+    def toggle_menu(self):
+        menu = self.root.ids.menu
+        if menu.x < 0:
+            Animation(x=0, d=0.2).start(menu)
+        else:
+            Animation(x=-menu.width, d=0.2).start(menu)
+
+    def toggle_theme(self):
+        # Decide target colours based on current background
+        if self.background_color == [0.1, 0.1, 0.1, 1]:
+            target_bg = [1, 1, 1, 1]
+            target_text = [0, 0, 0, 1]
+        else:
+            target_bg = [0.1, 0.1, 0.1, 1]
+            target_text = [1, 1, 1, 1]
+
+        Animation(
+            background_color=target_bg,
+            text_color=target_text,
+            d=0.3,
+            t="out_quad"
+        ).start(self)
+
+    def reset_theme(self):
+        # Resets the theme back to the original dark mode
+        default_bg = [0.1, 0.1, 0.1, 1]
+        default_text = [1, 1, 1, 1]
+
+        Animation(
+            background_color=default_bg,
+            text_color=default_text,
+            d=0.3,
+            t="out_quad"
+        ).start(self)
+
+
+if __name__ == "__main__":
+    NEA().run()
